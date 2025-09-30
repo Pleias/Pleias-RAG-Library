@@ -1,6 +1,9 @@
 from typing import Dict, List, Any, Optional, Literal
 import re
-import torch
+try:
+    import torch
+except ImportError:
+    print("torch is not installed. Check optional dependencies if you need it.")
 import json
 
 class RAGWithCitations:
@@ -14,7 +17,7 @@ class RAGWithCitations:
         trust_remote_code: bool = True,
         hf_token=None,
         models_dir="./pleias_models",
-        backend: Optional[Literal["vllm", "transformers", "llama_cpp"]] = None
+        backend: Optional[Literal["vllm", "transformers", "llama_cpp", "lmstudio"]] = None
     ):
         """
         Initialize the RAG Generator with either vLLM (if CUDA available) or transformers.
@@ -58,15 +61,19 @@ class RAGWithCitations:
         self.repetition_penalty = repetition_penalty
         self.trust_remote_code = trust_remote_code
 
-        # Check if CUDA is available
-        self.cuda_available = torch.cuda.is_available()
-        print(f"CUDA available: {self.cuda_available}")
+        try:
+            # Check if CUDA is available
+            self.cuda_available = torch.cuda.is_available()
+            print(f"CUDA available: {self.cuda_available}")
+        except ImportError:
+            print("torch is not installed. Check optional dependencies if you need it.")
 
         backends_init = {
             "vllm": self._init_vllm, 
             "transformers": self._init_transformers,
-            "llama_cpp": self._init_llama_cpp
-                        }
+            "llama_cpp": self._init_llama_cpp,
+            "lmstudio": self._init_lmstudio         
+            }
         chosen_backend = backend or ("vllm" if self.cuda_available else "transformers")
         self.backend = chosen_backend
         backends_init[chosen_backend]()
@@ -140,6 +147,21 @@ class RAGWithCitations:
             verbose=False,    
         )
         print("Model loaded successfully with llama_cpp")
+
+    def _init_lmstudio(self):
+        """
+        Initialize the model using lmstudio.
+
+        This pressuposes that lmstudio is listening on localhost:1234.
+        Follow the naming convention of lmstudio. e.g., "pleias-rag-350m".
+        """
+        from lmstudio import llm
+        
+        print(f"Loading model with lmstudio from {self.model_path}...")
+
+        self.model = llm(self.model_path)
+        
+        print("Model loaded successfully with lmstudio")
 
     ###################################
     # Prompt Formatting and Generation #
@@ -255,6 +277,22 @@ class RAGWithCitations:
             generated_text += piece
         
         return generated_text.strip()
+    
+    def _generate_lmstudio(self, formatted_prompt: str) -> str:
+        """
+        Generate text using lmstudio.
+        
+        Args:
+            formatted_prompt: The properly formatted input prompt
+
+        Returns:
+            Generated text response
+        """
+        prediction = self.model.respond_stream(formatted_prompt)
+        response = ""
+        for token in prediction:
+            response += token.content
+        return response
 
     #############################
     # Response Processing       #
@@ -419,8 +457,9 @@ class RAGWithCitations:
         backends_generation = {
             "vllm": self._generate_vllm, 
             "transformers": self._generate_transformers,
-            "llama_cpp": self._generate_llama_cpp
-                        }
+            "llama_cpp": self._generate_llama_cpp,
+            "lmstudio": self._generate_lmstudio
+        }
         raw_response = backends_generation[self.backend](formatted_prompt)
 
         # Process the response
